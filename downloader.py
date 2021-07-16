@@ -118,6 +118,7 @@ class PInterestDownloader:
             p = multiprocessing.Process(target=download_worker_entry, args=(self.state_persistent_file, keyword, search_name, save_path, target_number, self.subprocess_state_value))
             p.start()
             p.join()
+            assert p.exitcode == 0
             return DownloaderState(self.subprocess_state_value.value)
         else:
             return _download(self.state_persistent_file, keyword, search_name, save_path, target_number)
