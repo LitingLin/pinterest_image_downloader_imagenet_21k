@@ -1,3 +1,4 @@
+import multiprocessing
 from seleniumwire import webdriver
 from mimetypes import guess_extension
 import shelve
@@ -6,6 +7,8 @@ import urllib.parse
 import time
 import enum
 import tqdm
+import numpy as np
+from contextlib import closing
 
 
 class DownloaderState(enum.Enum):
@@ -14,7 +17,7 @@ class DownloaderState(enum.Enum):
     Fail = enum.auto()
 
 
-def _download_from_request(requests, save_path, downloaded_images: set, target_number, process_bar: tqdm.tqdm):
+def _download_from_requests(requests, save_path, downloaded_images: set, target_number):
     valid_count = 0
     for request in requests:
         if 'i.pinimg.com' not in request.url:
@@ -36,14 +39,14 @@ def _download_from_request(requests, save_path, downloaded_images: set, target_n
             continue
         with open(os.path.join(save_path, file_name), 'wb') as f:
             f.write(request.response.body)
-        process_bar.set_postfix_str(f'{len(downloaded_images)}/{target_number}, {file_name}')
+        print(f'{len(downloaded_images)}/{target_number}, {file_name}')
         downloaded_images.add(file_name)
         if len(downloaded_images) >= target_number:
             return valid_count
     return valid_count
 
 
-def _download_loop(driver: webdriver.Chrome, save_path: str, downloaded_images: set, target_number: int, process_bar: tqdm.tqdm):
+def _download_loop(driver: webdriver.Chrome, save_path: str, downloaded_images: set, target_number: int, rng: np.random.Generator):
     try_times = 50
     tried_times = 0
     last_num_downloaded = len(downloaded_images)
@@ -52,7 +55,7 @@ def _download_loop(driver: webdriver.Chrome, save_path: str, downloaded_images: 
     while True:
         if tried_times > try_times:
             return any(valid_counts)
-        valid_count = _download_from_request(driver.requests, save_path, downloaded_images, target_number, process_bar)
+        valid_count = _download_from_requests(driver.requests, save_path, downloaded_images, target_number)
         valid_counts.append(valid_count)
         del driver.requests
 
@@ -64,30 +67,16 @@ def _download_loop(driver: webdriver.Chrome, save_path: str, downloaded_images: 
 
         if len(downloaded_images) < target_number:
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(0.2)
+            time.sleep(rng.random() / 3)
         else:
             return True
 
 
-class PInterestDownloader:
-    def __init__(self, state_persistent_file: str):
-        self.state_persistent_file = state_persistent_file
-
-    def prepare(self):
-        self.shelve_object = shelve.open(self.state_persistent_file)
-
-    def close(self):
-        self.shelve_object.close()
-
-    def __enter__(self):
-        self.prepare()
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-
-    def download(self, keyword, search_name, save_path, target_number, process_bar: tqdm.tqdm):
-        if keyword in self.shelve_object:
-            downloaded_images = self.shelve_object[keyword]
+def _download(state_persistent_file: str, keyword: str, search_name: str, save_path: str, target_number: int):
+    rng = np.random.Generator(np.random.PCG64())
+    with closing(shelve.open(state_persistent_file)) as persistent_storage:
+        if keyword in persistent_storage:
+            downloaded_images = persistent_storage[keyword]
         else:
             downloaded_images = set()
         if len(downloaded_images) >= target_number:
@@ -97,9 +86,9 @@ class PInterestDownloader:
         driver = webdriver.Chrome('drivers/chromedriver')
         with driver:
             driver.get(f'https://id.pinterest.com/search/pins/?q={urllib.parse.quote(search_name)}&rs=typed')
-            success_flag = _download_loop(driver, save_path, downloaded_images, target_number, process_bar)
+            success_flag = _download_loop(driver, save_path, downloaded_images, target_number, rng)
             if len(downloaded_images) > 0:
-                self.shelve_object[keyword] = downloaded_images
+                persistent_storage[keyword] = downloaded_images
 
             if success_flag:
                 if len(downloaded_images) < target_number:
@@ -109,6 +98,25 @@ class PInterestDownloader:
             else:
                 return DownloaderState.Fail
 
+
+def download_worker_entry(state_persistent_file, keyword, search_name, save_path, target_number, shared_value: multiprocessing.Value):
+    state = _download(state_persistent_file, keyword, search_name, save_path, target_number)
+    shared_value.value = state.value
+
+
+class PInterestDownloader:
+    def __init__(self, state_persistent_file: str, enable_multiprocessing=True):
+        self.state_persistent_file = state_persistent_file
+        self.subprocess_state_value = multiprocessing.Value('i') if enable_multiprocessing else None
+
+    def download(self, keyword, search_name, save_path, target_number):
+        if self.subprocess_state_value:
+            p = multiprocessing.Process(target=download_worker_entry, args=(self.state_persistent_file, keyword, search_name, save_path, target_number, self.subprocess_state_value))
+            p.start()
+            p.join()
+            return DownloaderState(self.subprocess_state_value.value)
+        else:
+            return _download(self.state_persistent_file, keyword, search_name, save_path, target_number)
 
 
 def load_wordnet_ids(file_path: str):
@@ -140,21 +148,20 @@ def load_wordnet_lemmas(file_path: str):
     return wordnet_lemmas
 
 
-def download(target_number, target_path):
+def download(target_number, target_path, enable_multiprocessing):
     wordnet_ids = load_wordnet_ids(os.path.join(os.path.dirname(__file__), 'imagenet21k_wordnet_ids.txt'))
     wordnet_lemmas = load_wordnet_lemmas(os.path.join(os.path.dirname(__file__), 'imagenet21k_wordnet_lemmas.txt'))
     assert len(wordnet_ids) == len(wordnet_lemmas)
-    downloader = PInterestDownloader(os.path.join(target_path, 'downloader_state'))
+    downloader = PInterestDownloader(os.path.join(target_path, 'downloader_state'), enable_multiprocessing)
 
     fault_tolerance = 100
     fail_times = 0
 
-    with downloader:
-        process_bar = tqdm.tqdm(total=len(wordnet_ids))
+    with tqdm.tqdm(total=len(wordnet_ids)) as process_bar:
         for wordnet_id, wordnet_lemma in tqdm.tqdm(zip(wordnet_ids, wordnet_lemmas)):
             process_bar.set_description(f'{wordnet_id}: {wordnet_lemma}')
             downloader_state = downloader.download(wordnet_id, wordnet_lemma,
-                                                   os.path.join(target_path, wordnet_id), target_number, process_bar)
+                                                   os.path.join(target_path, wordnet_id), target_number)
             if downloader_state != DownloaderState.Fail:
                 fail_times = 0
             else:
@@ -162,7 +169,6 @@ def download(target_number, target_path):
                 if fail_times >= fault_tolerance:
                     return
             process_bar.update()
-            time.sleep(1)
 
 
 import argparse
@@ -172,5 +178,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('target_number', type=int, help='Number of image per category')
     parser.add_argument('target_path', type=str, help='Path to store images')
+    parser.add_argument('--disable-multiprocessing', action='store_true', help='Disable multiprocessing')
     args = parser.parse_args()
-    download(args.target_number, args.target_path)
+    download(args.target_number, args.target_path, not args.disable_multiprocessing)
