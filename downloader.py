@@ -1,5 +1,4 @@
 import multiprocessing
-from seleniumwire import webdriver
 from mimetypes import guess_extension
 import os
 import urllib.parse
@@ -10,6 +9,14 @@ import numpy as np
 from contextlib import closing
 import lmdb
 import pickle
+using_undetected_chrome_driver = True
+if using_undetected_chrome_driver:
+    try:
+        import seleniumwire.undetected_chromedriver.v2 as webdriver
+    except ImportError:
+        from seleniumwire import webdriver
+else:
+    from seleniumwire import webdriver
 
 
 class DownloaderState(enum.Enum):
@@ -48,9 +55,11 @@ def _download_from_requests(requests, save_path, downloaded_images: set, target_
 
 
 def _download_loop(driver: webdriver.Chrome, save_path: str, downloaded_images: set, target_number: int, rng: np.random.Generator):
-    try_times = 50
+    try_times = 100
     tried_times = 0
     last_num_downloaded = len(downloaded_images)
+
+    page_height = 0
 
     valid_counts = []
     while True:
@@ -69,6 +78,10 @@ def _download_loop(driver: webdriver.Chrome, save_path: str, downloaded_images: 
         if len(downloaded_images) < target_number:
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(rng.random() / 3)
+            new_page_height = driver.execute_script("return document.body.scrollHeight")
+            if new_page_height > page_height:
+                page_height = new_page_height
+                tried_times = 0
         else:
             return True
 
@@ -172,7 +185,7 @@ def download(target_number, target_path, enable_multiprocessing):
             else:
                 fail_times += 1
                 if fail_times >= fault_tolerance:
-                    return
+                    time.sleep(200)
             process_bar.update()
 
 
