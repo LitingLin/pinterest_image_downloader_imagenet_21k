@@ -186,6 +186,7 @@ def download(target_number, target_path, enable_multiprocessing):
                 fail_times += 1
                 if fail_times >= fault_tolerance:
                     time.sleep(200)
+                    fail_times = fault_tolerance / 2
             process_bar.update()
 
 
