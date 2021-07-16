@@ -1,7 +1,6 @@
 import multiprocessing
 from seleniumwire import webdriver
 from mimetypes import guess_extension
-import shelve
 import os
 import urllib.parse
 import time
@@ -9,6 +8,8 @@ import enum
 import tqdm
 import numpy as np
 from contextlib import closing
+import lmdb
+import pickle
 
 
 class DownloaderState(enum.Enum):
@@ -74,21 +75,24 @@ def _download_loop(driver: webdriver.Chrome, save_path: str, downloaded_images: 
 
 def _download(state_persistent_file: str, keyword: str, search_name: str, save_path: str, target_number: int):
     rng = np.random.Generator(np.random.PCG64())
-    with closing(shelve.open(state_persistent_file)) as persistent_storage:
-        if keyword in persistent_storage:
-            downloaded_images = persistent_storage[keyword]
-        else:
+    with closing(lmdb.open(state_persistent_file)) as persistent_storage:
+        with persistent_storage.begin(write=False, buffers=True) as txn:
+            downloaded_images = txn.get(keyword.encode('utf-8'))
+        if downloaded_images is None:
             downloaded_images = set()
+        else:
+            downloaded_images = pickle.loads(downloaded_images)
         if len(downloaded_images) >= target_number:
             return DownloaderState.Ok
         if not os.path.exists(save_path):
             os.mkdir(save_path)
-        driver = webdriver.Chrome('drivers/chromedriver')
+        driver = webdriver.Chrome(os.path.join(os.path.dirname(__file__), 'drivers/chromedriver'))
         with driver:
             driver.get(f'https://id.pinterest.com/search/pins/?q={urllib.parse.quote(search_name)}&rs=typed')
             success_flag = _download_loop(driver, save_path, downloaded_images, target_number, rng)
             if len(downloaded_images) > 0:
-                persistent_storage[keyword] = downloaded_images
+                with persistent_storage.begin(write=True, buffers=False) as txn:
+                    txn.put(keyword.encode('utf-8'), pickle.dumps(downloaded_images))
 
             if success_flag:
                 if len(downloaded_images) < target_number:
@@ -176,7 +180,7 @@ import argparse
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('target_number', type=int, help='Number of image per category')
+    parser.add_argument('target_number', type=int, help='Number of images per category')
     parser.add_argument('target_path', type=str, help='Path to store images')
     parser.add_argument('--disable-multiprocessing', action='store_true', help='Disable multiprocessing')
     args = parser.parse_args()
