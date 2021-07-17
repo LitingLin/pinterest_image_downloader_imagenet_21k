@@ -9,6 +9,7 @@ import numpy as np
 from contextlib import closing
 import lmdb
 import pickle
+import traceback
 using_undetected_chrome_driver = True
 if using_undetected_chrome_driver:
     try:
@@ -116,21 +117,31 @@ def _download(state_persistent_file: str, keyword: str, search_name: str, save_p
                     'no_proxy': 'localhost,127.0.0.1'  # excludes
                 }
             }
-        driver = webdriver.Chrome(os.path.join(os.path.dirname(__file__), 'drivers/chromedriver'), **webdriver_options)
-        with driver:
-            driver.get(f'https://id.pinterest.com/search/pins/?q={urllib.parse.quote(search_name)}&rs=typed')
-            success_flag = _download_loop(driver, save_path, downloaded_images, target_number, rng)
-            if len(downloaded_images) > 0:
-                with persistent_storage.begin(write=True, buffers=False) as txn:
-                    txn.put(keyword.encode('utf-8'), pickle.dumps(downloaded_images))
+        fault_tolerance = 2
+        tried_times = 0
+        while True:
+            if tried_times == fault_tolerance:
+                break
+            try:
+                driver = webdriver.Chrome(os.path.join(os.path.dirname(__file__), 'drivers/chromedriver'), **webdriver_options)
+                with driver:
+                    driver.get(f'https://id.pinterest.com/search/pins/?q={urllib.parse.quote(search_name)}&rs=typed')
+                    success_flag = _download_loop(driver, save_path, downloaded_images, target_number, rng)
+                    break
+            except Exception:
+                print(traceback.format_exc())
+                tried_times += 1
+        if len(downloaded_images) > 0:
+            with persistent_storage.begin(write=True, buffers=False) as txn:
+                txn.put(keyword.encode('utf-8'), pickle.dumps(downloaded_images))
 
-            if success_flag:
-                if len(downloaded_images) < target_number:
-                    return DownloaderState.Partly
-                else:
-                    return DownloaderState.Ok
+        if success_flag:
+            if len(downloaded_images) < target_number:
+                return DownloaderState.Partly
             else:
-                return DownloaderState.Fail
+                return DownloaderState.Ok
+        else:
+            return DownloaderState.Fail
 
 
 def download_worker_entry(state_persistent_file, keyword, search_name, save_path, target_number, proxy_address, headless,
@@ -154,7 +165,8 @@ class PInterestDownloader:
                                               self.subprocess_state_value))
             p.start()
             p.join()
-            assert p.exitcode == 0
+            if p.exitcode != 0:
+                return DownloaderState(DownloaderState.Fail)
             return DownloaderState(self.subprocess_state_value.value)
         else:
             return _download(self.state_persistent_file, keyword, search_name, save_path, target_number,
@@ -202,7 +214,7 @@ def download(target_number, target_path, enable_multiprocessing, proxy_address, 
     fault_tolerance = 100
     fail_times = 0
 
-    with tqdm.tqdm(total=len(wordnet_ids)) as process_bar:
+    with tqdm.tqdm(total=len(wordnet_ids), ) as process_bar:
         for wordnet_id, wordnet_lemma in tqdm.tqdm(zip(wordnet_ids, wordnet_lemmas)):
             process_bar.set_description(f'{wordnet_id}: {wordnet_lemma}')
             downloader_state = downloader.download(wordnet_id, wordnet_lemma,
