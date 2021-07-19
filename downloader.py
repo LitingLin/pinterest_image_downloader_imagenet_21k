@@ -1,4 +1,8 @@
 import multiprocessing
+from multiprocessing.pool import ThreadPool
+import threading
+from functools import partial
+from itertools import starmap
 from mimetypes import guess_extension
 import os
 import urllib.parse
@@ -24,9 +28,11 @@ class DownloaderState(enum.Enum):
 
 
 _image_file_extensions = ('.jpg', '.jpeg', '.gif', '.webp', '.png')
+_thread_local_variables = threading.local()
+_fault_tolerance = 100
 
 
-def _download_from_requests(requests, save_path, downloaded_images: set, target_number):
+def _download_from_requests(requests, save_path, downloaded_images: set, target_number, disp_prefix: str):
     valid_count = 0
     for request in requests:
         if 'i.pinimg.com' not in request.url:
@@ -50,14 +56,17 @@ def _download_from_requests(requests, save_path, downloaded_images: set, target_
         with open(image_file_path + '.tmp', 'wb') as f:
             f.write(request.response.body)
         os.rename(image_file_path + '.tmp', image_file_path)
-        print(f'{len(downloaded_images)}/{target_number}, {file_name}')
+        if disp_prefix is not None:
+            print(f'{disp_prefix}: ', end='')
+        print(f'{len(downloaded_images)}/{target_number} {file_name}')
         downloaded_images.add(file_name)
         if len(downloaded_images) >= target_number:
             return valid_count
     return valid_count
 
 
-def _download_loop(driver: webdriver.Chrome, save_path: str, downloaded_images: set, target_number: int, rng: np.random.Generator):
+def _download_loop(driver: webdriver.Chrome, save_path: str, downloaded_images: set, target_number: int,
+                   rng: np.random.Generator, disp_prefix: str):
     try_times = 100
     tried_times = 0
     last_num_downloaded = len(downloaded_images)
@@ -68,7 +77,7 @@ def _download_loop(driver: webdriver.Chrome, save_path: str, downloaded_images: 
     while True:
         if tried_times > try_times:
             return any(valid_counts)
-        valid_count = _download_from_requests(driver.requests, save_path, downloaded_images, target_number)
+        valid_count = _download_from_requests(driver.requests, save_path, downloaded_images, target_number, disp_prefix)
         valid_counts.append(valid_count)
         del driver.requests
 
@@ -89,7 +98,7 @@ def _download_loop(driver: webdriver.Chrome, save_path: str, downloaded_images: 
             return True
 
 
-def _download(search_name: str, save_path: str, target_number: int, proxy_address: str, headless: bool):
+def _download(search_name: str, save_path: str, target_number: int, proxy_address: str, headless: bool, disp_prefix: str):
     rng = np.random.Generator(np.random.PCG64())
     if not os.path.exists(save_path):
         os.mkdir(save_path)
@@ -126,7 +135,7 @@ def _download(search_name: str, save_path: str, target_number: int, proxy_addres
             driver = webdriver.Chrome(os.path.join(os.path.dirname(__file__), 'drivers/chromedriver'), **webdriver_options)
             with driver:
                 driver.get(f'https://id.pinterest.com/search/pins/?q={urllib.parse.quote(search_name)}&rs=typed')
-                success_flag = _download_loop(driver, save_path, downloaded_images, target_number, rng)
+                success_flag = _download_loop(driver, save_path, downloaded_images, target_number, rng, disp_prefix)
                 break
         except Exception:
             print(traceback.format_exc())
@@ -141,9 +150,9 @@ def _download(search_name: str, save_path: str, target_number: int, proxy_addres
         return DownloaderState.Fail
 
 
-def download_worker_entry(search_name, save_path, target_number, proxy_address, headless,
+def download_worker_entry(search_name, save_path, target_number, proxy_address, headless, disp_prefix: str,
                           shared_value: multiprocessing.Value):
-    state = _download(search_name, save_path, target_number, proxy_address, headless)
+    state = _download(search_name, save_path, target_number, proxy_address, headless, disp_prefix)
     shared_value.value = state.value
 
 
@@ -153,10 +162,11 @@ class PInterestDownloader:
         self.proxy_address = proxy_address
         self.headless = headless
 
-    def download(self, search_name, save_path, target_number):
+    def download(self, search_name, save_path, target_number, disp_prefix=None):
         if self.subprocess_state_value:
             p = multiprocessing.Process(target=download_worker_entry,
                                         args=(search_name, save_path, target_number, self.proxy_address, self.headless,
+                                              disp_prefix,
                                               self.subprocess_state_value))
             p.start()
             p.join()
@@ -164,7 +174,7 @@ class PInterestDownloader:
                 return DownloaderState(DownloaderState.Fail)
             return DownloaderState(self.subprocess_state_value.value)
         else:
-            return _download(search_name, save_path, target_number, self.proxy_address, self.headless)
+            return _download(search_name, save_path, target_number, self.proxy_address, self.headless, disp_prefix)
 
 
 def load_wordnet_ids(file_path: str):
@@ -196,7 +206,22 @@ def load_wordnet_lemmas(file_path: str):
     return wordnet_lemmas
 
 
-def download(target_number, target_path, enable_multiprocessing, proxy_address, headless):
+def _download_wordnet_lemma_on_pinterest(downloader, target_path, target_number, process_bar, wordnet_id, wordnet_lemma):
+    disp_prefix = f'{wordnet_lemma}({wordnet_id})'
+    process_bar.set_description(f'Downloading: {disp_prefix}')
+    downloader_state = downloader.download(wordnet_lemma,
+                                           os.path.join(target_path, wordnet_id), target_number, disp_prefix)
+    if downloader_state != DownloaderState.Fail:
+        _thread_local_variables.fail_times = 0
+    else:
+        _thread_local_variables.fail_times += 1
+        if _thread_local_variables.fail_times >= _fault_tolerance:
+            time.sleep(200)
+            _thread_local_variables.fail_times = _fault_tolerance / 2
+    process_bar.update()
+
+
+def download(target_number, target_path, enable_multiprocessing, proxy_address, headless, num_threads=0):
     wordnet_ids = load_wordnet_ids(os.path.join(os.path.dirname(__file__), 'imagenet21k_wordnet_ids.txt'))
     wordnet_lemmas = load_wordnet_lemmas(os.path.join(os.path.dirname(__file__), 'imagenet21k_wordnet_lemmas.txt'))
     assert len(wordnet_ids) == len(wordnet_lemmas)
@@ -204,22 +229,17 @@ def download(target_number, target_path, enable_multiprocessing, proxy_address, 
                                      proxy_address,
                                      headless)
 
-    fault_tolerance = 100
-    fail_times = 0
+    _thread_local_variables.fail_times = 0
 
     with tqdm.tqdm(total=len(wordnet_ids), ) as process_bar:
-        for wordnet_id, wordnet_lemma in tqdm.tqdm(zip(wordnet_ids, wordnet_lemmas)):
-            process_bar.set_description(f'{wordnet_id}: {wordnet_lemma}')
-            downloader_state = downloader.download(wordnet_lemma,
-                                                   os.path.join(target_path, wordnet_id), target_number)
-            if downloader_state != DownloaderState.Fail:
-                fail_times = 0
-            else:
-                fail_times += 1
-                if fail_times >= fault_tolerance:
-                    time.sleep(200)
-                    fail_times = fault_tolerance / 2
-            process_bar.update()
+        download_func = partial(_download_wordnet_lemma_on_pinterest, downloader, target_path,
+                                target_number, process_bar)
+        if num_threads == 0:
+            for wordnet_id, wordnet_lemma in zip(wordnet_ids, wordnet_lemmas):
+                download_func(wordnet_ids, wordnet_lemma)
+        else:
+            with ThreadPool(num_threads) as pool:
+                pool.starmap(download_func, zip(wordnet_ids, wordnet_lemmas))
 
 
 import argparse
@@ -229,8 +249,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('target_number', type=int, help='Number of images per category')
     parser.add_argument('target_path', type=str, help='Path to store images')
+    parser.add_argument('--num-threads', type=int, default=0, help='Number of concurrent threads')
     parser.add_argument('--disable-multiprocessing', action='store_true', help='Disable multiprocessing')
     parser.add_argument('--proxy', type=str, help='Proxy address')
     parser.add_argument('--headless', action='store_true', help='Running chrome in headless mode')
     args = parser.parse_args()
-    download(args.target_number, args.target_path, not args.disable_multiprocessing, args.proxy, args.headless)
+    download(args.target_number, args.target_path, not args.disable_multiprocessing, args.proxy, args.headless, args.num_threads)
