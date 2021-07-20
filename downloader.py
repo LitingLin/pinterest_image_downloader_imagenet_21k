@@ -117,15 +117,16 @@ def download(workspace_dir, desire_num_per_category: int, desire_resolution: str
 
     _thread_local_variables.fail_times = 0
 
-    with tqdm.tqdm(total=len(wordnet_ids), ) as process_bar:
-        download_func = partial(_download_wordnet_lemma_on_pinterest, downloader, desire_num_per_category,
-                                desire_resolution, process_bar)
-        if num_threads == 0:
-            for wordnet_id, wordnet_lemma in zip(wordnet_ids, wordnet_lemmas):
-                download_func(wordnet_id, wordnet_lemma)
-        else:
-            with ThreadPool(num_threads) as pool:
-                pool.starmap(download_func, zip(wordnet_ids, wordnet_lemmas))
+    while True:
+        with tqdm.tqdm(total=len(wordnet_ids), ) as process_bar:
+            download_func = partial(_download_wordnet_lemma_on_pinterest, downloader, desire_num_per_category,
+                                    desire_resolution, process_bar)
+            if num_threads == 0:
+                for wordnet_id, wordnet_lemma in zip(wordnet_ids, wordnet_lemmas):
+                    download_func(wordnet_id, wordnet_lemma)
+            else:
+                with ThreadPool(num_threads) as pool:
+                    pool.starmap(download_func, zip(wordnet_ids, wordnet_lemmas))
 
 
 import argparse
