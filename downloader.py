@@ -2,7 +2,6 @@ import multiprocessing
 from multiprocessing.pool import ThreadPool
 import threading
 from functools import partial
-from itertools import starmap
 from mimetypes import guess_extension
 import os
 import urllib.parse
@@ -12,6 +11,7 @@ import tqdm
 import numpy as np
 import traceback
 using_undetected_chrome_driver = True
+from collections import namedtuple
 if using_undetected_chrome_driver:
     try:
         import seleniumwire.undetected_chromedriver.v2 as webdriver
@@ -30,6 +30,80 @@ class DownloaderState(enum.Enum):
 _image_file_extensions = ('.jpg', '.jpeg', '.gif', '.webp', '.png')
 _thread_local_variables = threading.local()
 _fault_tolerance = 100
+
+_pinterest_image_resolution_list = ['originals', '736x', '564x', '474x', '236x', '170x', '75x75_RS']
+
+
+class PInterestImageResolution(enum.IntEnum):
+    _75x75_RS = enum.auto()
+    _170x = enum.auto()
+    _236x = enum.auto()
+    _474x = enum.auto()
+    _564x = enum.auto()
+    _736x = enum.auto()
+    Originals = enum.auto()
+
+
+_get_pinterest_image_resolution_enum = {
+    'originals': PInterestImageResolution.Originals,
+    '736x': PInterestImageResolution._736x,
+    '564x': PInterestImageResolution._564x,
+    '474x': PInterestImageResolution._474x,
+    '236x': PInterestImageResolution._236x,
+    '170x': PInterestImageResolution._170x,
+    '75x75_RS': PInterestImageResolution._75x75_RS
+}
+
+
+ImageDownloadState = namedtuple('ImageDownloadState', ('url', 'resolution'))
+
+class _DownloadHandler:
+    def __init__(self, driver: webdriver.Chrome, target_resolution):
+        assert target_resolution in _pinterest_image_resolution_list
+
+        self.driver = driver
+        self.target_resolution = target_resolution
+
+    def _parse_downloaded_images(self, downloaded_images):
+        pass
+
+    def handle(self):
+        try_times = 100
+        tried_times = 0
+        last_num_downloaded = len(downloaded_images)
+
+        page_height = 0
+
+        valid_counts = []
+        while True:
+            if tried_times > try_times:
+                return any(valid_counts)
+            valid_count = _download_from_requests(driver.requests, save_path, downloaded_images, target_number,
+                                                  disp_prefix)
+            valid_counts.append(valid_count)
+            del driver.requests
+
+            if len(downloaded_images) <= last_num_downloaded:
+                tried_times += 1
+            else:
+                last_num_downloaded = len(downloaded_images)
+                tried_times = 0
+
+            if len(downloaded_images) < target_number:
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(rng.random() / 3)
+                new_page_height = driver.execute_script("return document.body.scrollHeight;")
+                if new_page_height > page_height:
+                    page_height = new_page_height
+                    tried_times = 0
+            else:
+                return True
+
+        pass
+
+
+
+
 
 
 def _download_from_requests(requests, save_path, downloaded_images: set, target_number, disp_prefix: str):
@@ -90,7 +164,7 @@ def _download_loop(driver: webdriver.Chrome, save_path: str, downloaded_images: 
         if len(downloaded_images) < target_number:
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(rng.random() / 3)
-            new_page_height = driver.execute_script("return document.body.scrollHeight")
+            new_page_height = driver.execute_script("return document.body.scrollHeight;")
             if new_page_height > page_height:
                 page_height = new_page_height
                 tried_times = 0
@@ -249,6 +323,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('target_number', type=int, help='Number of images per category')
     parser.add_argument('target_path', type=str, help='Path to store images')
+    parser.add_argument('--resolution', type=str, default='736x', help='image resolution, availables: (orig 736x 564x 474x 236x 170x)')
     parser.add_argument('--num-threads', type=int, default=0, help='Number of concurrent threads')
     parser.add_argument('--disable-multiprocessing', action='store_true', help='Disable multiprocessing')
     parser.add_argument('--proxy', type=str, help='Proxy address')
