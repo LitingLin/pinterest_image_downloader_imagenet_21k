@@ -1,21 +1,17 @@
 import enum
-from collections import namedtuple
 from .web_driver import get_default_web_driver
 from seleniumwire.request import Request, Response
 from mimetypes import guess_extension
 from typing import Dict
+import time
+import numpy as np
+from .io import DownloaderIOOps
+from .common import DownloaderState, PInterestImageResolution
+import traceback
+import urllib.parse
+
 
 _image_file_extensions = ('.jpg', '.jpeg', '.gif', '.webp', '.png')
-
-
-class PInterestImageResolution(enum.IntEnum):
-    _75x75_RS = enum.auto()
-    _170x = enum.auto()
-    _236x = enum.auto()
-    _474x = enum.auto()
-    _564x = enum.auto()
-    _736x = enum.auto()
-    Originals = enum.auto()
 
 
 class _ImageState(enum.Enum):
@@ -27,12 +23,12 @@ class _ImageState(enum.Enum):
 
 _get_pinterest_image_resolution_enum = {
     'originals': PInterestImageResolution.Originals,
-    '736x': PInterestImageResolution._736x,
-    '564x': PInterestImageResolution._564x,
-    '474x': PInterestImageResolution._474x,
-    '236x': PInterestImageResolution._236x,
-    '170x': PInterestImageResolution._170x,
-    '75x75_RS': PInterestImageResolution._75x75_RS
+    '736x': PInterestImageResolution.p_736x,
+    '564x': PInterestImageResolution.p_564x,
+    '474x': PInterestImageResolution.p_474x,
+    '236x': PInterestImageResolution.p_236x,
+    '170x': PInterestImageResolution.p_170x,
+    '75x75_RS': PInterestImageResolution.p_75x75_RS
 }
 
 
@@ -125,7 +121,7 @@ def _parse_request(request: Request):
     return ret
 
 
-def _parse_requests(requests, task_state: Dict[str, _ImageContext], target_resolution: PInterestImageResolution):
+def _parse_requests(requests, io_operator: DownloaderIOOps, task_state: Dict[str, _ImageContext], target_resolution: PInterestImageResolution):
     downloaded_images = []
     new_requests = []
     for request in requests:
@@ -133,11 +129,17 @@ def _parse_requests(requests, task_state: Dict[str, _ImageContext], target_resol
         if ret is None:
             continue
         image_file_name, image_context = ret
-        downloaded_image = image_file_name, image_context.content
+
+        if io_operator.has_file(image_file_name):
+            continue
+
+        downloaded_image = image_file_name, image_context.content, image_context.url
         if image_file_name not in task_state:
             # new image
             if image_context.resolution < target_resolution:
                 new_requests.append((image_context.url, target_resolution))
+                if image_context.state == _ImageState.downloaded:
+                    image_context.state = _ImageState.pending
                 task_state[image_file_name] = image_context
             else:
                 if image_context.state == _ImageState.downloaded:
@@ -152,7 +154,10 @@ def _parse_requests(requests, task_state: Dict[str, _ImageContext], target_resol
                 if image_context.resolution != min(PInterestImageResolution) and image_context.resolution - 1 > task_state[image_file_name].resolution:
                     new_requests.append((image_context.url, PInterestImageResolution(image_context.resolution - 1)))
                 else:
-                    if task_state[image_file_name].state == _ImageState.downloaded:
+                    if task_state[image_file_name].state == _ImageState.pending:
+                        image_context = task_state[image_file_name]
+                        downloaded_image = image_file_name, image_context.content, image_context.url
+                        image_context.state = _ImageState.downloaded
                         downloaded_images.append(downloaded_image)
                     else:
                         del task_state[image_file_name]
@@ -174,87 +179,99 @@ def _launch_new_requests(driver, new_requests):
     driver.execute_script(js_script)
 
 
-class _DownloadHandler:
-    def __init__(self, driver, target_resolution, downloaded_images, disp_prefix):
-        if len(downloaded_images) is not None:
-            self.downloaded_images_on_last_run = set(downloaded_images)
-        else:
-            self.downloaded_images_on_last_run = []
-
-        self.driver = driver
-        self.target_resolution = target_resolution
-        self.disp_prefix = disp_prefix
-        self.try_times = 100
-        self.sleep_time_per_iteration = 1 / 3
-
-    def handle(self):
-        tried_times = 0
-        last_num_downloaded = len(self.downloaded_images_on_last_run)
-
-        page_height = 0
-
-        valid_counts = []
-        image_downloading_context = {}
-        while True:
-            if tried_times > self.try_times:
-                return any(valid_counts)
-            valid_count = _download_from_requests(driver.requests, save_path, downloaded_images, target_number,
-                                                  disp_prefix)
-            valid_counts.append(valid_count)
-            del driver.requests
-
-            if len(downloaded_images) <= last_num_downloaded:
-                tried_times += 1
-            else:
-                last_num_downloaded = len(downloaded_images)
-                tried_times = 0
-
-            if len(downloaded_images) < target_number:
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(rng.random() / 3)
-                new_page_height = driver.execute_script("return document.body.scrollHeight;")
-                if new_page_height > page_height:
-                    page_height = new_page_height
-                    tried_times = 0
-            else:
-                return True
-
-        pass
+def _save_downloaded_images(downloaded_images, io_operator: DownloaderIOOps, num_downloaded_images, target_number, disp_prefix: str):
+    for image_file_name, image_content, image_url in downloaded_images:
+        io_operator.save(image_file_name, image_content)
+        io_operator.save_meta(image_file_name, image_url)
+        num_downloaded_images += 1
+        if disp_prefix is not None:
+            print(f'{disp_prefix}: ', end='')
+        print(f'{num_downloaded_images}/{target_number} {image_file_name}')
 
 
-
-
-
-
-
-def _download_loop(driver: webdriver.Chrome, save_path: str, downloaded_images: set, target_number: int,
+def _download_loop(driver, io_operator: DownloaderIOOps, num_downloaded_images, target_number: int,
+                   target_resolution: PInterestImageResolution, task_state: dict,
                    rng: np.random.Generator, disp_prefix: str):
     try_times = 100
     tried_times = 0
-    last_num_downloaded = len(downloaded_images)
+    sleep_time = 1 / 6
+    last_run_downloaded = num_downloaded_images.item()
 
     page_height = 0
 
-    valid_counts = []
     while True:
         if tried_times > try_times:
-            return any(valid_counts)
-        valid_count = _download_from_requests(driver.requests, save_path, downloaded_images, target_number, disp_prefix)
-        valid_counts.append(valid_count)
+            return num_downloaded_images - last_run_downloaded > 0
+
+        downloaded_images, new_requests = _parse_requests(driver.requests, io_operator, task_state, target_resolution)
         del driver.requests
 
-        if len(downloaded_images) <= last_num_downloaded:
+        if len(downloaded_images) == 0 and len(new_requests) == 0:
             tried_times += 1
         else:
-            last_num_downloaded = len(downloaded_images)
             tried_times = 0
 
-        if len(downloaded_images) < target_number:
+        _save_downloaded_images(downloaded_images, io_operator, num_downloaded_images, target_number, disp_prefix)
+        _launch_new_requests(driver, new_requests)
+
+        if num_downloaded_images < target_number:
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(rng.random() / 3)
+            time.sleep(rng.random() * sleep_time * 2)
             new_page_height = driver.execute_script("return document.body.scrollHeight;")
             if new_page_height > page_height:
                 page_height = new_page_height
                 tried_times = 0
         else:
             return True
+
+
+def download_wordnet_id_search_result_from_pinterest(wordnet_id: str, search_name: str, workspace_dir: str,
+                                                     db_config: dict, target_number: int, target_resolution,
+                                                     proxy_address: str, headless: bool):
+    rng = np.random.Generator(np.random.PCG64())
+
+    io_operator = DownloaderIOOps(wordnet_id, workspace_dir, db_config)
+
+    disp_prefix = f'{search_name}({wordnet_id})'
+    with io_operator:
+        num_downloaded_images = io_operator.count()
+
+        if num_downloaded_images >= target_number:
+            return DownloaderState.Ok
+
+        num_downloaded_images = np.asarray(num_downloaded_images)
+        fault_tolerance = 2
+        tried_times = 0
+
+        task_state = {}
+
+        while True:
+            if tried_times == fault_tolerance:
+                break
+            try:
+                driver = get_default_web_driver(proxy_address, headless)
+                with driver:
+                    driver.get(f'https://id.pinterest.com/search/pins/?q={urllib.parse.quote(search_name)}&rs=typed')
+                    success_flag = _download_loop(driver, io_operator, num_downloaded_images, target_number,
+                                                  target_resolution, task_state, rng, disp_prefix)
+
+                    rest_downloaded_images = []
+                    for image_file_name, image_context in task_state.items():
+                        if image_context.state == _ImageState.pending:
+                            downloaded_image = image_file_name, image_context.content, image_context.url
+                            rest_downloaded_images.append(downloaded_image)
+                    _save_downloaded_images(rest_downloaded_images, io_operator, num_downloaded_images, target_number, disp_prefix)
+                    if success_flag:
+                        if num_downloaded_images < target_number:
+                            return DownloaderState.Partly
+                        else:
+                            return DownloaderState.Ok
+                    else:
+                        return DownloaderState.Fail
+            except Exception as e:
+                print(traceback.format_exc())
+                tried_times += 1
+
+                debug = True
+                if debug:
+                    raise e
