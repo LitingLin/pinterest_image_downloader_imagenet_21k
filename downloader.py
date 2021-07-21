@@ -160,7 +160,9 @@ if __name__ == '__main__':
     parser.add_argument('number_per_category', type=int, help='Number of images per category')
     parser.add_argument('--slice-begin', type=int, help='Begin index of categories')
     parser.add_argument('--slice-end', type=int, help='End index of categories')
-    parser.add_argument('--resolution', type=str, default='736x', help='image resolution, availables: (orig, 736x, 564x, 474x, 236x, 170x, 75x75_RS)')
+    parser.add_argument('--resolution', type=str, default='736x', choices=['orig', '736x', '564x', '474x', '236x',
+                                                                           '170x', '75x75_RS'],
+                        help='Select image resolution preference')
     parser.add_argument('--num-threads', type=int, default=0, help='Number of concurrent threads')
     parser.add_argument('--disable-multiprocessing', action='store_true', help='Disable multiprocessing')
     parser.add_argument('--proxy', type=str, help='Proxy address')
