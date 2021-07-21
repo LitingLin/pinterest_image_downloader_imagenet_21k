@@ -13,5 +13,8 @@ def db_drop(db_config: dict):
 
 
 if __name__ == '__main__':
+    char = input('Please make sure! Type yes to continue:')
+    if char != 'yes':
+        sys.exit()
     from db_utils._get_db_config import get_db_config
     db_drop(get_db_config())
