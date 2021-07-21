@@ -18,6 +18,7 @@ def get_default_web_driver(proxy_address: str = None, headless: bool = False):
         chrome_options = webdriver.ChromeOptions()
         chrome_options.add_argument('--headless')
         chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--no-sandbox')
         webdriver_options['options'] = chrome_options
 
     if proxy_address is not None:
