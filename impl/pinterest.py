@@ -227,17 +227,21 @@ def _download_loop(driver, io_operator: DownloaderIOOps, num_downloaded_images, 
 
 def download_wordnet_id_search_result_from_pinterest(wordnet_id: str, search_name: str, workspace_dir: str,
                                                      db_config: dict, target_number: int, target_resolution,
-                                                     proxy_address: str, headless: bool):
-    rng = np.random.Generator(np.random.PCG64())
+                                                     proxy_address: str, headless: bool,
+                                                     file_lock_expired_time: int = 1800  # half hour
+                                                     ):
+    io_operator = DownloaderIOOps(wordnet_id, workspace_dir, db_config, file_lock_expired_time)
+    if not io_operator.try_lock():
+        return DownloaderState.Skipped, 0
 
-    io_operator = DownloaderIOOps(wordnet_id, workspace_dir, db_config)
-
-    disp_prefix = f'{search_name}({wordnet_id})'
     with io_operator:
+        rng = np.random.Generator(np.random.PCG64())
+        disp_prefix = f'{search_name}({wordnet_id})'
+
         num_downloaded_images = io_operator.count()
 
         if num_downloaded_images >= target_number:
-            return DownloaderState.Ok
+            return DownloaderState.Done, num_downloaded_images
 
         num_downloaded_images = np.asarray(num_downloaded_images)
         fault_tolerance = 2
@@ -263,11 +267,11 @@ def download_wordnet_id_search_result_from_pinterest(wordnet_id: str, search_nam
                     _save_downloaded_images(rest_downloaded_images, io_operator, num_downloaded_images, target_number, disp_prefix)
                     if success_flag:
                         if num_downloaded_images < target_number:
-                            return DownloaderState.Partly
+                            return DownloaderState.Unfinished, num_downloaded_images.item()
                         else:
-                            return DownloaderState.Ok
+                            return DownloaderState.Done, num_downloaded_images.item()
                     else:
-                        return DownloaderState.Fail
+                        return DownloaderState.Fail, num_downloaded_images.item()
             except Exception as e:
                 print(traceback.format_exc())
                 tried_times += 1

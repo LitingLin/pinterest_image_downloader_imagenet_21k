@@ -15,6 +15,7 @@ class PInterestImageResolution(enum.IntEnum):
 
 
 class DownloaderState(enum.Enum):
-    Ok = enum.auto()
-    Partly = enum.auto()
+    Done = enum.auto()
+    Unfinished = enum.auto()
     Fail = enum.auto()
+    Skipped = enum.auto()
