@@ -45,15 +45,24 @@ class PInterestCrawlerDAO:
         result = cursor.fetchone()[0]
         return result == 1
 
-    def insert(self, cursor, wordnet_id: str, file_name: str, url: str, storage_engine: int = 0):
+    def insert_and_commit(self, cursor, wordnet_id: str, file_name: str, url: str, storage_engine: int = 0):
         try:
-            cursor.execute(_new_record_sql_statement, (_concatenate_wordnet_id_file_name(wordnet_id, file_name), url,
-                                                       storage_engine))
+            self.insert(cursor, wordnet_id, file_name, url, storage_engine)
             self.ctx.commit()
             return True, None, None
         except mysql.connector.Error as e:
             self.ctx.rollback()
             return False, e.errno, str(e)
+
+    def insert(self, cursor, wordnet_id: str, file_name: str, url: str, storage_engine: int = 0):
+        cursor.execute(_new_record_sql_statement, (_concatenate_wordnet_id_file_name(wordnet_id, file_name), url,
+                                                   storage_engine))
+
+    def commit(self):
+        self.ctx.commit()
+
+    def rollback(self):
+        self.ctx.rollback()
 
     def create_table(self, cursor):
         cursor.execute(_create_table_sql_statement)

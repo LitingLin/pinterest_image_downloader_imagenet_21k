@@ -16,7 +16,7 @@ class DatabaseOperators:
         return self.dao.count_by_wordnet_id(self.cursor, self.wordnet_id)
 
     def save_meta(self, image_file_name: str, url: str):
-        ok, errno, err_msg = self.dao.insert(self.cursor, self.wordnet_id, image_file_name, url, 0)
+        ok, errno, err_msg = self.dao.insert_and_commit(self.cursor, self.wordnet_id, image_file_name, url, 0)
         if ok:
             return True
         else:
