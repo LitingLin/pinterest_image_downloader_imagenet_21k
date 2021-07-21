@@ -19,10 +19,11 @@ _new_record_sql_statement = 'INSERT INTO `Records` (`wordnet_id_and_file_name`, 
 _count_all_sql_statement = 'SELECT COUNT(*) FROM `Records`'
 _count_by_wordnet_id_sql_statement = "SELECT COUNT(*) FROM `Records` WHERE `wordnet_id_and_file_name` LIKE %s"
 _select_all_sql_statement = 'SELECT * from `Records`'
+_select_id_file_url_sql_statement = 'SELECT `id`, `wordnet_id_and_file_name`, `url` from `Records`'
 
 
 def _concatenate_wordnet_id_file_name(wordnet_id, file_name):
-    # assert len(wordnet_id) == 9
+    assert len(wordnet_id) == 9
     return wordnet_id + '-' + file_name
 
 
@@ -44,7 +45,7 @@ class PInterestCrawlerDAO:
         result = cursor.fetchone()[0]
         return result == 1
 
-    def insert(self, cursor, wordnet_id: str, file_name: str, url: str, storage_engine: int):
+    def insert(self, cursor, wordnet_id: str, file_name: str, url: str, storage_engine: int = 0):
         try:
             cursor.execute(_new_record_sql_statement, (_concatenate_wordnet_id_file_name(wordnet_id, file_name), url,
                                                        storage_engine))
@@ -69,18 +70,18 @@ class PInterestCrawlerDAO:
         return cursor.fetchone()[0]
 
     def get_iterator(self, cursor):
-        cursor.execute(_select_all_sql_statement)
+        cursor.execute(_select_id_file_url_sql_statement)
         return cursor
 
     def get_iterator_with_id_limits(self, cursor, id_min: int=None, id_max: int=None):
         if id_min is None and id_max is None:
-            cursor.execute(_select_all_sql_statement)
+            cursor.execute(_select_id_file_url_sql_statement)
         elif id_min is not None and id_max is not None:
-            cursor.execute(_select_all_sql_statement + ' WHERE `id` >= %s AND `id` <= %s', (id_min, id_max))
+            cursor.execute(_select_id_file_url_sql_statement + ' WHERE `id` >= %s AND `id` <= %s', (id_min, id_max))
         elif id_min is not None:
-            cursor.execute(_select_all_sql_statement + ' WHERE `id` >= %s', (id_min,))
+            cursor.execute(_select_id_file_url_sql_statement + ' WHERE `id` >= %s', (id_min,))
         elif id_max is not None:
-            cursor.execute(_select_all_sql_statement + ' WHERE `id` <= %s', (id_max,))
+            cursor.execute(_select_id_file_url_sql_statement + ' WHERE `id` <= %s', (id_max,))
         else:
             raise Exception
         return cursor
