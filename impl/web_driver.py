@@ -1,6 +1,6 @@
 import os
 
-using_undetected_chrome_driver = True
+using_undetected_chrome_driver = False
 if using_undetected_chrome_driver:
     try:
         import seleniumwire.undetected_chromedriver.v2 as webdriver
