@@ -16,8 +16,8 @@ _fault_tolerance = 100
 def download_worker_entry(wordnet_id: str, search_name: str, workspace_dir: str, db_config: dict, target_number: int,
                           target_resolution, proxy_address: str, headless: bool,
                           shared_value: multiprocessing.Value):
-    state, count = download_wordnet_id_search_result_from_pinterest(wordnet_id, search_name, workspace_dir, db_config,
-                                                             target_number, target_resolution, proxy_address, headless)
+    state, count = download_wordnet_id_search_result_from_pinterest(
+        wordnet_id, search_name, workspace_dir, db_config, target_number, target_resolution, proxy_address, headless)
     if state == DownloaderState.Skipped:
         count = -1
     elif state == DownloaderState.Fail:
@@ -84,24 +84,26 @@ def load_wordnet_lemmas(file_path: str):
             lemma = lemma.strip()
             if len(lemma) == 0:
                 continue
-            word = lemma.split(',')[0].strip()
-            if len(word) > 0:
-                wordnet_lemmas.append(word)
+            words = lemma.split(',')
+            words = [word.strip() for word in words]
+            if len(words) > 0:
+                wordnet_lemmas.append(words)
     return wordnet_lemmas
 
 
-def _download_wordnet_lemma_on_pinterest(downloader, target_number, target_resolution, process_bar, wordnet_id, wordnet_lemma):
-    process_bar.set_description(f'Downloading: {wordnet_lemma}({wordnet_id})')
-    downloader_state = downloader.download(wordnet_id, wordnet_lemma, target_number, target_resolution)
-    if downloader_state != DownloaderState.Fail:
-        _thread_local_variables.fail_times = 0
-    else:
-        _thread_local_variables.fail_times += 1
-        if _thread_local_variables.fail_times >= _fault_tolerance:
-            time.sleep(200)
-            _thread_local_variables.fail_times = _fault_tolerance / 2
-    process_bar.update()
-    return downloader_state
+def _download_wordnet_lemma_on_pinterest(downloader, target_number, target_resolution, process_bar, wordnet_id, wordnet_lemmas):
+    for wordnet_lemma in wordnet_lemmas:
+        process_bar.set_description(f'Downloading: {wordnet_lemma}({wordnet_id})')
+        downloader_state = downloader.download(wordnet_id, wordnet_lemma, target_number, target_resolution)
+        if downloader_state != DownloaderState.Fail:
+            _thread_local_variables.fail_times = 0
+        else:
+            _thread_local_variables.fail_times += 1
+            if _thread_local_variables.fail_times >= _fault_tolerance:
+                time.sleep(200)
+                _thread_local_variables.fail_times = _fault_tolerance / 2
+        process_bar.update()
+        return downloader_state
 
 
 _get_pinterest_image_resolution_enum = {
