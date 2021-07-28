@@ -140,8 +140,6 @@ def download(workspace_dir, desire_num_per_category: int, desire_resolution: str
 
     downloader = PInterestDownloader(workspace_dir, enable_multiprocessing, proxy_address, headless, database_config)
 
-    _thread_local_variables.fail_times = 0
-
     while True:
         with tqdm.tqdm(total=len(wordnet_ids), ) as process_bar:
             download_func = partial(_download_wordnet_lemma_on_pinterest, downloader, desire_num_per_category,
