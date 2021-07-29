@@ -18,7 +18,6 @@ class _ImageState(enum.Enum):
     downloaded = enum.auto()
     pending = enum.auto()
     rejected = enum.auto()
-    fail = enum.auto()
 
 
 _get_pinterest_image_resolution_enum = {
@@ -78,11 +77,6 @@ def _is_pinterest_image_server_url(url: str):
         return False
 
     return True
-
-
-def _is_valid_request(request: Request):
-    if request.response is None:
-        return False
 
 
 def _parse_request(request: Request):

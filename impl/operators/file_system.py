@@ -59,5 +59,5 @@ class FileSystemOperators:
             os.rename(path + '.tmp', path)
 
     def save_meta(self, image_file_name: str, image_url: str):
-        with open(os.path.join(self.folder, 'meta.csv'), 'a') as f:
+        with open(os.path.join(self.folder, 'meta.csv'), 'a', newline='', encoding='utf-8') as f:
             f.write(f"{image_file_name},{image_url}\n")
