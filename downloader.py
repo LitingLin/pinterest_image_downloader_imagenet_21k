@@ -101,7 +101,7 @@ def _download_wordnet_lemma_on_pinterest(downloader, target_number, target_resol
             if hasattr(_thread_local_variables, 'fail_times'):
                 _thread_local_variables.fail_times += 1
             else:
-                _thread_local_variables.fail_times = 0
+                _thread_local_variables.fail_times = 1
             if _thread_local_variables.fail_times >= _fault_tolerance:
                 time.sleep(200)
                 _thread_local_variables.fail_times = _fault_tolerance / 2
