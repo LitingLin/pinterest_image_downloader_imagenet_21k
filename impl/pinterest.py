@@ -7,6 +7,7 @@ import time
 import numpy as np
 from .io import DownloaderIOOps
 from .common import DownloaderState, PInterestImageResolution
+from .perf_stat.function_call import FunctionCallPerfStat
 import traceback
 import urllib.parse
 
@@ -224,52 +225,54 @@ def download_wordnet_id_search_result_from_pinterest(wordnet_id: str, search_nam
                                                      proxy_address: str, headless: bool,
                                                      file_lock_expired_time: int = 1800  # half hour
                                                      ):
-    io_operator = DownloaderIOOps(wordnet_id, workspace_dir, db_config, file_lock_expired_time)
-    if not io_operator.try_lock():
-        return DownloaderState.Skipped, 0
+    perf_stat = FunctionCallPerfStat(True)
+    with perf_stat:
+        io_operator = DownloaderIOOps(wordnet_id, workspace_dir, db_config, file_lock_expired_time)
+        if not io_operator.try_lock():
+            return DownloaderState.Skipped, 0
 
-    with io_operator:
-        rng = np.random.Generator(np.random.PCG64())
-        disp_prefix = f'{search_name}({wordnet_id})'
+        with io_operator:
+            rng = np.random.Generator(np.random.PCG64())
+            disp_prefix = f'{search_name}({wordnet_id})'
 
-        num_downloaded_images = io_operator.count()
+            num_downloaded_images = io_operator.count()
 
-        if num_downloaded_images >= target_number:
-            return DownloaderState.Done, num_downloaded_images
+            if num_downloaded_images >= target_number:
+                return DownloaderState.Done, num_downloaded_images
 
-        num_downloaded_images = np.asarray(num_downloaded_images)
-        fault_tolerance = 2
-        tried_times = 0
+            num_downloaded_images = np.asarray(num_downloaded_images)
+            fault_tolerance = 2
+            tried_times = 0
 
-        task_state = {}
+            task_state = {}
 
-        while True:
-            if tried_times == fault_tolerance:
-                break
-            try:
-                driver = get_default_web_driver(proxy_address, headless)
-                with driver:
-                    driver.get(f'https://id.pinterest.com/search/pins/?q={urllib.parse.quote(search_name)}&rs=typed')
-                    success_flag = _download_loop(driver, io_operator, num_downloaded_images, target_number,
-                                                  target_resolution, task_state, rng, disp_prefix)
+            while True:
+                if tried_times == fault_tolerance:
+                    break
+                try:
+                    driver = get_default_web_driver(proxy_address, headless)
+                    with driver:
+                        driver.get(f'https://id.pinterest.com/search/pins/?q={urllib.parse.quote(search_name)}&rs=typed')
+                        success_flag = _download_loop(driver, io_operator, num_downloaded_images, target_number,
+                                                      target_resolution, task_state, rng, disp_prefix)
 
-                    rest_downloaded_images = []
-                    for image_file_name, image_context in task_state.items():
-                        if image_context.state == _ImageState.pending:
-                            downloaded_image = image_file_name, image_context.content, image_context.url
-                            rest_downloaded_images.append(downloaded_image)
-                    _save_downloaded_images(rest_downloaded_images, io_operator, num_downloaded_images, target_number, disp_prefix)
-                    if success_flag:
-                        if num_downloaded_images < target_number:
-                            return DownloaderState.Unfinished, num_downloaded_images.item()
+                        rest_downloaded_images = []
+                        for image_file_name, image_context in task_state.items():
+                            if image_context.state == _ImageState.pending:
+                                downloaded_image = image_file_name, image_context.content, image_context.url
+                                rest_downloaded_images.append(downloaded_image)
+                        _save_downloaded_images(rest_downloaded_images, io_operator, num_downloaded_images, target_number, disp_prefix)
+                        if success_flag:
+                            if num_downloaded_images < target_number:
+                                return DownloaderState.Unfinished, num_downloaded_images.item()
+                            else:
+                                return DownloaderState.Done, num_downloaded_images.item()
                         else:
-                            return DownloaderState.Done, num_downloaded_images.item()
-                    else:
-                        return DownloaderState.Fail, num_downloaded_images.item()
-            except Exception as e:
-                print(traceback.format_exc())
-                tried_times += 1
+                            return DownloaderState.Fail, num_downloaded_images.item()
+                except Exception as e:
+                    print(traceback.format_exc())
+                    tried_times += 1
 
-                debug = True
-                if debug:
-                    raise e
+                    debug = True
+                    if debug:
+                        raise e

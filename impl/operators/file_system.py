@@ -1,6 +1,7 @@
 import os
 import time
 from ..common import _image_file_extensions
+from impl.perf_stat.function_call import record_running_time
 
 
 class FileSystemOperators:
@@ -19,6 +20,7 @@ class FileSystemOperators:
         except OSError:
             return False
 
+    @record_running_time
     def try_lock(self, expired_time):
         if self._try_create_lock_file():
             return True
@@ -33,6 +35,7 @@ class FileSystemOperators:
             return False
         return self._try_create_lock_file()
 
+    @record_running_time
     def release_lock(self):
         lock_file = os.path.join(self.folder, '.lock')
         try:
@@ -40,14 +43,17 @@ class FileSystemOperators:
         except OSError:
             pass
 
+    @record_running_time
     def has_file(self, image_file_name: str):
         return os.path.exists(os.path.join(self.folder, image_file_name))
 
+    @record_running_time
     def count(self):
         files = os.listdir(self.folder)
         files = [file for file in files if file.endswith(_image_file_extensions)]
         return len(files)
 
+    @record_running_time
     def save(self, image_file_name: str, content: bytes):
         path = os.path.join(self.folder, image_file_name)
         with open(path + '.tmp', 'wb') as f:
@@ -58,6 +64,7 @@ class FileSystemOperators:
             os.remove(path)
             os.rename(path + '.tmp', path)
 
+    @record_running_time
     def save_meta(self, image_file_name: str, image_url: str):
         with open(os.path.join(self.folder, 'meta.csv'), 'a', newline='', encoding='utf-8') as f:
             f.write(f"{image_file_name},{image_url}\n")
