@@ -37,7 +37,7 @@ class PInterestCrawlerDAO:
         self.ctx.close()
 
     def get_cursor(self, buffered=False):
-        return self.ctx.cursor(buffered=buffered, prepared=True)
+        return self.ctx.cursor(buffered=buffered)
 
     def exists(self, cursor, wordnet_id: str, file_name: str):
         cursor.execute(_exists_file_sql_statement, (_concatenate_wordnet_id_file_name(wordnet_id, file_name), ))
