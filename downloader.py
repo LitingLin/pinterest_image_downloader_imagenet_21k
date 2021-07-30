@@ -14,10 +14,11 @@ _fault_tolerance = 100
 
 
 def download_worker_entry(wordnet_id: str, search_name: str, workspace_dir: str, db_config: dict, target_number: int,
-                          target_resolution, proxy_address: str, headless: bool,
+                          target_resolution, proxy_address: str, headless: bool, enable_io_perf_stat: bool,
                           shared_value: multiprocessing.Value):
     state, count = download_wordnet_id_search_result_from_pinterest(
-        wordnet_id, search_name, workspace_dir, db_config, target_number, target_resolution, proxy_address, headless)
+        wordnet_id, search_name, workspace_dir, db_config, target_number, target_resolution, proxy_address, headless,
+        enable_io_perf_stat)
     if state == DownloaderState.Skipped:
         count = -1
     elif state == DownloaderState.Fail:
@@ -27,18 +28,19 @@ def download_worker_entry(wordnet_id: str, search_name: str, workspace_dir: str,
 
 class PInterestDownloader:
     def __init__(self, workspace_dir, enable_multiprocessing=True, proxy_address=None, headless=False,
-                 database_config: dict = None):
+                 database_config: dict = None, enable_io_perf_stat: bool = False):
         self.workspace_dir = workspace_dir
         self.subprocess_state_value = multiprocessing.Value('i') if enable_multiprocessing else None
         self.proxy_address = proxy_address
         self.headless = headless
         self.db_config = database_config
+        self.enable_io_perf_stat = enable_io_perf_stat
 
     def download(self, wordnet_id, search_name, target_number, target_resolution):
         if self.subprocess_state_value:
             p = multiprocessing.Process(target=download_worker_entry,
                                         args=(wordnet_id, search_name, self.workspace_dir,self.db_config, target_number,
-                                              target_resolution, self.proxy_address, self.headless,
+                                              target_resolution, self.proxy_address, self.headless, self.enable_io_perf_stat,
                                               self.subprocess_state_value))
             p.start()
             p.join()
@@ -57,7 +59,7 @@ class PInterestDownloader:
             state, _ = download_wordnet_id_search_result_from_pinterest(wordnet_id, search_name, self.workspace_dir,
                                                                         self.db_config, target_number,
                                                                         target_resolution, self.proxy_address,
-                                                                        self.headless)
+                                                                        self.headless, self.enable_io_perf_stat)
             return state
 
 
@@ -122,7 +124,7 @@ _get_pinterest_image_resolution_enum = {
 
 def download(workspace_dir, desire_num_per_category: int, desire_resolution: str,
              enable_mysql: bool, enable_multiprocessing: bool = True, proxy_address: str = None, headless: bool = False,
-             num_threads: int = 0, slice_begin: int = None, slice_end: int = None):
+             num_threads: int = 0, slice_begin: int = None, slice_end: int = None, enable_io_perf_stat: bool = False):
     wordnet_ids = load_wordnet_ids(os.path.join(os.path.dirname(__file__), 'imagenet21k_wordnet_ids.txt'))
     wordnet_lemmas = load_wordnet_lemmas(os.path.join(os.path.dirname(__file__), 'imagenet21k_wordnet_lemmas.txt'))
     assert len(wordnet_ids) == len(wordnet_lemmas)
@@ -138,7 +140,7 @@ def download(workspace_dir, desire_num_per_category: int, desire_resolution: str
         with open(json_file_path) as f:
             database_config = json.load(f)
 
-    downloader = PInterestDownloader(workspace_dir, enable_multiprocessing, proxy_address, headless, database_config)
+    downloader = PInterestDownloader(workspace_dir, enable_multiprocessing, proxy_address, headless, database_config, enable_io_perf_stat)
 
     while True:
         with tqdm.tqdm(total=len(wordnet_ids), ) as process_bar:
@@ -171,7 +173,8 @@ if __name__ == '__main__':
     parser.add_argument('--proxy', type=str, help='Proxy address')
     parser.add_argument('--headless', action='store_true', help='Running chrome in headless mode')
     parser.add_argument('--use-mysql', action='store_true', help='Using MySQL to store meta data')
+    parser.add_argument('--io-perf-stat', action='store_true', help='Enable I/O related operation performance statistics')
     args = parser.parse_args()
     download(args.workspace_dir, args.number_per_category, args.resolution, args.use_mysql,
              not args.disable_multiprocessing, args.proxy, args.headless, args.num_threads,
-             args.slice_begin, args.slice_end)
+             args.slice_begin, args.slice_end, args.io_perf_stat)

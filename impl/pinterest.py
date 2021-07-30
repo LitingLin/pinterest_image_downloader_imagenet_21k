@@ -10,6 +10,7 @@ from .common import DownloaderState, PInterestImageResolution
 from .perf_stat.function_call import FunctionCallPerfStat
 import traceback
 import urllib.parse
+from contextlib import nullcontext
 
 
 _image_file_extensions = ('.jpg', '.jpeg', '.gif', '.webp', '.png')
@@ -223,9 +224,10 @@ def _download_loop(driver, io_operator: DownloaderIOOps, num_downloaded_images, 
 def download_wordnet_id_search_result_from_pinterest(wordnet_id: str, search_name: str, workspace_dir: str,
                                                      db_config: dict, target_number: int, target_resolution,
                                                      proxy_address: str, headless: bool,
+                                                     enable_io_perf_stat: bool = False,
                                                      file_lock_expired_time: int = 1800  # half hour
                                                      ):
-    perf_stat = FunctionCallPerfStat(True)
+    perf_stat = FunctionCallPerfStat(True) if enable_io_perf_stat else nullcontext()
     with perf_stat:
         io_operator = DownloaderIOOps(wordnet_id, workspace_dir, db_config, file_lock_expired_time)
         if not io_operator.try_lock():
