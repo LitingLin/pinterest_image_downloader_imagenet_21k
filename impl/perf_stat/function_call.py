@@ -29,7 +29,8 @@ class FunctionCallPerfStat:
         self.print_on_exit = print_on_exit
 
     def __enter__(self):
-        self.last_stat_object = _stat.stat_object
+        if hasattr(_stat, 'stat_object'):
+            self.last_stat_object = _stat.stat_object
         _stat.stat_object = self
 
     def clear(self):
@@ -42,4 +43,5 @@ class FunctionCallPerfStat:
             for func_name, (run_times, running_time) in self.running_time.items():
                 stat_string += f'{func_name} time {running_time:.2f} called {run_times} avg {running_time / run_times:.2f}\n'
             print(stat_string)
-        _stat.stat_object = self.last_stat_object
+        if hasattr(self, 'last_stat_object'):
+            _stat.stat_object = self.last_stat_object
