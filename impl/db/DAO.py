@@ -6,7 +6,6 @@ CREATE TABLE `Records` (
     `id` INT NOT NULL AUTO_INCREMENT,
     `wordnet_id_and_file_name` VARCHAR(768) NOT NULL,
     `url` VARCHAR(768) NOT NULL,
-    `storage_engine` SMALLINT NOT NULL,
     `create_time` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     `modify_time` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
@@ -15,7 +14,7 @@ CREATE TABLE `Records` (
 '''
 _drop_table_sql_statement = 'DROP TABLE `Records`'
 _exists_file_sql_statement = 'SELECT EXISTS(SELECT * FROM `Records` WHERE `wordnet_id_and_file_name` = %s)'
-_new_record_sql_statement = 'INSERT INTO `Records` (`wordnet_id_and_file_name`, `url`, `storage_engine`) values (%s, %s, %s)'
+_new_record_sql_statement = 'INSERT INTO `Records` (`wordnet_id_and_file_name`, `url`) values (%s, %s)'
 _count_all_sql_statement = 'SELECT COUNT(*) FROM `Records`'
 _count_by_wordnet_id_sql_statement = "SELECT COUNT(*) FROM `Records` WHERE `wordnet_id_and_file_name` LIKE %s"
 _select_all_sql_statement = 'SELECT * from `Records`'
@@ -38,25 +37,29 @@ class PInterestCrawlerDAO:
         self.ctx.close()
 
     def get_cursor(self, buffered=False):
-        return self.ctx.cursor(buffered=buffered)
+        return self.ctx.cursor(buffered=buffered, prepared=True)
 
     def exists(self, cursor, wordnet_id: str, file_name: str):
         cursor.execute(_exists_file_sql_statement, (_concatenate_wordnet_id_file_name(wordnet_id, file_name), ))
         result = cursor.fetchone()[0]
         return result == 1
 
-    def insert_and_commit(self, cursor, wordnet_id: str, file_name: str, url: str, storage_engine: int = 0):
+    def insert_and_commit(self, cursor, wordnet_id: str, file_name: str, url: str):
         try:
-            self.insert(cursor, wordnet_id, file_name, url, storage_engine)
+            self.insert(cursor, wordnet_id, file_name, url)
             self.ctx.commit()
             return True, None, None
         except mysql.connector.Error as e:
             self.ctx.rollback()
             return False, e.errno, str(e)
 
-    def insert(self, cursor, wordnet_id: str, file_name: str, url: str, storage_engine: int = 0):
-        cursor.execute(_new_record_sql_statement, (_concatenate_wordnet_id_file_name(wordnet_id, file_name), url,
-                                                   storage_engine))
+    def insert(self, cursor, wordnet_id: str, file_name: str, url: str):
+        cursor.execute(_new_record_sql_statement, (_concatenate_wordnet_id_file_name(wordnet_id, file_name), url))
+
+    def insert_multiple(self, cursor, wordnet_ids: list, file_names: list, urls: list):
+        assert len(wordnet_ids) == len(file_names) == len(urls)
+        wordnet_ids_and_file_names = [_concatenate_wordnet_id_file_name(wordnet_id, file_name) for wordnet_id, file_name in zip(wordnet_ids, file_names)]
+        cursor.executemany(_new_record_sql_statement, zip(wordnet_ids_and_file_names, urls))
 
     def commit(self):
         self.ctx.commit()

@@ -5,10 +5,13 @@ from impl.db.DAO import PInterestCrawlerDAO
 from contextlib import closing
 import csv
 from tqdm import tqdm
-import mysql.connector
 
 
 def db_restore_records_from_csv(db_config: dict, csv_file: str):
+    buffer_size = 100
+    buffered_wordnet_ids = []
+    buffered_file_names = []
+    buffered_urls = []
     dao = PInterestCrawlerDAO(db_config)
     with dao:
         try:
@@ -19,13 +22,16 @@ def db_restore_records_from_csv(db_config: dict, csv_file: str):
                         continue
                     assert len(row) == 3
                     wordnet_id, file_name, url = row
-                    try:
-                        dao.insert(cursor, wordnet_id, file_name, url)
-                    except mysql.connector.Error as e:
-                        if e.errno == 1062:
-                            print(f'Warn: duplicated record {wordnet_id}, {file_name}, {url}')
-                        else:
-                            raise e
+                    buffered_wordnet_ids.append(wordnet_id)
+                    buffered_file_names.append(file_name)
+                    buffered_urls.append(url)
+                    if len(buffered_wordnet_ids) >= buffer_size:
+                        dao.insert_multiple(cursor, buffered_wordnet_ids, buffered_file_names, buffered_urls)
+                        buffered_wordnet_ids.clear()
+                        buffered_file_names.clear()
+                        buffered_urls.clear()
+            if len(buffered_wordnet_ids) > 0:
+                dao.insert_multiple(cursor, buffered_wordnet_ids, buffered_file_names, buffered_urls)
             dao.commit()
         except Exception:
             dao.rollback()
