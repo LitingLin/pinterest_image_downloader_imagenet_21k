@@ -30,8 +30,8 @@ def db_restore_records_from_csv(db_config: dict, csv_file: str):
                         buffered_wordnet_ids.clear()
                         buffered_file_names.clear()
                         buffered_urls.clear()
-            if len(buffered_wordnet_ids) > 0:
-                dao.insert_multiple(cursor, buffered_wordnet_ids, buffered_file_names, buffered_urls)
+                if len(buffered_wordnet_ids) > 0:
+                    dao.insert_multiple(cursor, buffered_wordnet_ids, buffered_file_names, buffered_urls)
             dao.commit()
         except Exception:
             dao.rollback()
