@@ -2,7 +2,6 @@ import threading
 import time
 
 _stat = threading.local()
-_stat.stat_object = None
 
 
 def record_running_time(func):
