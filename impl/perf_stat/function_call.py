@@ -6,7 +6,7 @@ _stat = threading.local()
 
 def record_running_time(func):
     def _inner(*args, **kwargs):
-        if _stat.stat_object is None:
+        if not hasattr(_stat, 'stat_object'):
             return func(*args, **kwargs)
         else:
             begin = time.perf_counter()
@@ -24,7 +24,7 @@ def record_running_time(func):
 
 class FunctionCallPerfStat:
     def __init__(self, print_on_exit):
-        self.clear()
+        self.running_time = {}
         self.print_on_exit = print_on_exit
 
     def __enter__(self):
@@ -33,7 +33,7 @@ class FunctionCallPerfStat:
         _stat.stat_object = self
 
     def clear(self):
-        self.running_time = {}
+        self.running_time.clear()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.print_on_exit:
@@ -44,3 +44,5 @@ class FunctionCallPerfStat:
             print(stat_string)
         if hasattr(self, 'last_stat_object'):
             _stat.stat_object = self.last_stat_object
+        else:
+            del _stat.stat_object
